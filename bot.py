@@ -1,6 +1,7 @@
 # bot.py - VERSIONE ULTRA-SEMPLICE GARANTITA
 #GitHub per Gist:  g h p _ q n F F B t U P Y q 0 8 a c r 3 S j j W H w n 5 J i g P C A 2 5 1 i F c
 #Github Gist backup:98e323b6ad67035edf13a6d57f97ffe1
+# bot.py - VERSIONE CORRETTA
 import logging
 import sqlite3
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
@@ -29,6 +30,17 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+
+# Stati per wizard
+class WizardStates:
+    AGGIUNGI_VVF_QUALIFICA = 1
+    AGGIUNGI_VVF_COGNOME = 2
+    AGGIUNGI_VVF_NOME = 3
+    AGGIUNGI_VVF_AUTISTA = 4
+    AGGIUNGI_CAMBIO_DATA = 5
+    AGGIUNGI_CAMBIO_TIPO = 6
+    AGGIUNGI_CAMBIO_VVF_DA = 7
+    AGGIUNGI_CAMBIO_VVF_A = 8
 
 # === DATABASE SCHEMA COMPLETO ===
 def init_db_cambi():
@@ -193,7 +205,7 @@ def calcola_squadra_di_turno(tipo_squadra: str, data: datetime) -> str:
     elif tipo_squadra == "Squadre Notti Venerdì":
         inizio_anno = datetime(data.year, 1, 1)
         settimane_dall_inizio = (data - inizio_anno).days // 7
-        indice = (settimane_dall_inizio // 2) % numero_squadre
+        indice = settimane_dall_inizio % numero_squadre
         squadra = squadre[indice][1]
 
     elif tipo_squadra == "Squadre Sere":
@@ -212,42 +224,124 @@ def e_festivo(data: datetime) -> bool:
     """Verifica se una data è festiva"""
     return data.weekday() == 6  # Domenica
 
-def get_chi_tocca_oggi() -> str:
-    """Calcola chi tocca oggi per tutti i turni"""
+def get_chi_tocca_settimana() -> str:
+    """Calcola chi tocca per la settimana corrente e ventura"""
     oggi = datetime.now()
-
-    turni_oggi = []
-
-    # SERA (oggi 20-24)
-    if oggi.hour < 20:
-        if not e_festivo(oggi) and oggi.weekday() != 5:  # Non festivo e non sabato
-            squadra_sera = calcola_squadra_di_turno("Squadre Sere", oggi)
-            turni_oggi.append(f"🌙 **Sera oggi (20-24):** {squadra_sera}")
-
-    # NOTTE (stasera -> domani 24-07)
-    if oggi.weekday() == 4:  # Venerdì
-        squadra_notte = calcola_squadra_di_turno("Squadre Notti Venerdì", oggi)
-    elif 0 <= oggi.weekday() <= 3:  # Lun-Gio
-        squadra_notte = calcola_squadra_di_turno("Squadre Notti Feriali", oggi)
-    else:
-        squadra_notte = "Weekend"
-
-    if squadra_notte != "Weekend":
-        turni_oggi.append(f"🌃 **Notte stasera (24-07):** {squadra_notte}")
-
-    # WEEKEND
-    if oggi.weekday() >= 5 or e_festivo(oggi):
-        squadra_weekend = calcola_squadra_di_turno("Squadre Weekend", oggi)
-        turni_oggi.append(f"🎯 **Weekend/Festivo:** {squadra_weekend}")
-
-    if turni_oggi:
-        messaggio = "📅 **CHI TOCCA OGGI**\n\n" + "\n".join(turni_oggi)
-    else:
-        messaggio = "📅 Oggi non ci sono turni programmati"
-
-    messaggio += f"\n\n👤 **Le tue squadre:**\n• Weekend: D\n• Notti feriali: Bn\n• Sere: S7"
-
+    inizio_settimana = oggi - timedelta(days=oggi.weekday())
+    
+    messaggio = "📅 **CHI TOCCA - SETTIMANA CORRENTE E VENTURA**\n\n"
+    
+    # Settimana corrente
+    messaggio += "**🗓️ SETTIMANA CORRENTE**\n"
+    for i in range(7):
+        data = inizio_settimana + timedelta(days=i)
+        data_str = data.strftime("%d/%m")
+        giorno_str = data.strftime("%a")
+        
+        # Evidenzia oggi
+        if data.date() == oggi.date():
+            giorno_str = f"**{giorno_str} (OGGI)**"
+        
+        turni_giorno = []
+        
+        # Turni serali (feriali, non sabato)
+        if data.weekday() < 5:  # Lun-Ven
+            squadra_sera = calcola_squadra_di_turno("Squadre Sere", data)
+            turni_giorno.append(f"Sera: {squadra_sera}")
+        
+        # Turni notte
+        if data.weekday() == 4:  # Venerdì
+            squadra_notte = calcola_squadra_di_turno("Squadre Notti Venerdì", data)
+            turni_giorno.append(f"Notte: {squadra_notte}")
+        elif 0 <= data.weekday() <= 3:  # Lun-Gio
+            squadra_notte = calcola_squadra_di_turno("Squadre Notti Feriali", data)
+            turni_giorno.append(f"Notte: {squadra_notte}")
+        
+        # Weekend
+        if data.weekday() >= 5 or e_festivo(data):
+            squadra_weekend = calcola_squadra_di_turno("Squadre Weekend", data)
+            turni_giorno.append(f"Weekend: {squadra_weekend}")
+        
+        if turni_giorno:
+            messaggio += f"• {data_str} {giorno_str}: {', '.join(turni_giorno)}\n"
+        else:
+            messaggio += f"• {data_str} {giorno_str}: Nessun turno\n"
+    
+    # Settimana ventura
+    messaggio += "\n**🔮 PROSSIMA SETTIMANA**\n"
+    inizio_prossima = inizio_settimana + timedelta(days=7)
+    
+    for i in range(7):
+        data = inizio_prossima + timedelta(days=i)
+        data_str = data.strftime("%d/%m")
+        giorno_str = data.strftime("%a")
+        
+        turni_giorno = []
+        
+        # Turni serali
+        if data.weekday() < 5:
+            squadra_sera = calcola_squadra_di_turno("Squadre Sere", data)
+            turni_giorno.append(f"Sera: {squadra_sera}")
+        
+        # Turni notte
+        if data.weekday() == 4:
+            squadra_notte = calcola_squadra_di_turno("Squadre Notti Venerdì", data)
+            turni_giorno.append(f"Notte: {squadra_notte}")
+        elif 0 <= data.weekday() <= 3:
+            squadra_notte = calcola_squadra_di_turno("Squadre Notti Feriali", data)
+            turni_giorno.append(f"Notte: {squadra_notte}")
+        
+        # Weekend
+        if data.weekday() >= 5 or e_festivo(data):
+            squadra_weekend = calcola_squadra_di_turno("Squadre Weekend", data)
+            turni_giorno.append(f"Weekend: {squadra_weekend}")
+        
+        if turni_giorno:
+            messaggio += f"• {data_str} {giorno_str}: {', '.join(turni_giorno)}\n"
+    
+    # Le tue squadre
+    messaggio += f"\n👤 **LE TUE SQUADRE:**\n"
+    messaggio += f"• Weekend: D\n• Notti feriali: Bn\n• Sere: S7\n• Notti venerdì: S1n/S2n (a rotazione)\n"
+    
     return messaggio
+
+def get_carichi_pendenti() -> str:
+    """Mostra i carichi pendenti"""
+    conn = get_conn()
+    c = conn.cursor()
+    
+    c.execute('''
+        SELECT c.data_cambio, v1.cognome, v1.nome, v2.cognome, v2.nome, 
+               t.nome, c.ore_effettive, c.stato
+        FROM cambi c
+        JOIN vvf v1 ON c.vvf_da_id = v1.id
+        JOIN vvf v2 ON c.vvf_a_id = v2.id
+        JOIN tipologie_turno t ON c.tipologia_turno_id = t.id
+        WHERE c.stato = 'programmato'
+        ORDER BY c.data_cambio
+    ''')
+    
+    cambi_pendenti = c.fetchall()
+    conn.close()
+    
+    if not cambi_pendenti:
+        return "⏰ **CARICHI PENDENTI**\n\nNessun cambio programmato in sospeso."
+    
+    messaggio = "⏰ **CARICHI PENDENTI**\n\n"
+    for data, cognome_da, nome_da, cognome_a, nome_a, tipo_turno, ore, stato in cambi_pendenti:
+        data_str = datetime.strptime(data, "%Y-%m-%d").strftime("%d/%m/%Y")
+        messaggio += f"📅 {data_str}: {cognome_da} {nome_da} → {cognome_a} {nome_a}\n"
+        messaggio += f"   Turno: {tipo_turno} ({ore} ore)\n\n"
+    
+    return messaggio
+
+def get_mie_sostituzioni() -> str:
+    """Mostra le sostituzioni dell'utente"""
+    return "🔔 **MIE SOSTITUZIONI**\n\nFunzione in sviluppo - verranno mostrate qui le sostituzioni che ti riguardano."
+
+def rimuovi_cambio_interattivo() -> str:
+    """Avvia processo rimozione cambio"""
+    return "🗑️ **RIMUOVI CAMBIO**\n\nFunzione in sviluppo - seleziona il cambio da rimuovere."
 
 # === TASTIERA FISICA ===
 def crea_tastiera_cambi(user_id: int) -> ReplyKeyboardMarkup:
@@ -310,7 +404,7 @@ async def handle_message_cambi(update: Update, context: ContextTypes.DEFAULT_TYP
 
     # ROUTING DEI COMANDI
     if text == "📅 Chi Tocca":
-        messaggio_chi_tocca = get_chi_tocca_oggi()
+        messaggio_chi_tocca = get_chi_tocca_settimana()
         await update.message.reply_text(messaggio_chi_tocca)
 
     elif text == "🏃‍♂️ Gestisci Squadre":
@@ -324,6 +418,18 @@ async def handle_message_cambi(update: Update, context: ContextTypes.DEFAULT_TYP
 
     elif text == "🔄 Aggiungi Cambio":
         await avvia_wizard_cambio(update, context)
+
+    elif text == "🗑️ Rimuovi Cambio":
+        messaggio = rimuovi_cambio_interattivo()
+        await update.message.reply_text(messaggio)
+
+    elif text == "⏰ Carichi Pendenti":
+        messaggio = get_carichi_pendenti()
+        await update.message.reply_text(messaggio)
+
+    elif text == "🔔 Mie Sostituzioni":
+        messaggio = get_mie_sostituzioni()
+        await update.message.reply_text(messaggio)
 
     elif text == "📈 Prospetto Totale":
         await update.message.reply_text("📈 **PROSPETTO TOTALE**\n\nCalcolo dei bilanci di tutti i VVF...")
@@ -374,18 +480,59 @@ async def mostra_gestione_vvf(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def avvia_wizard_cambio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Avvia il wizard per aggiungere un cambio"""
+    keyboard = [
+        [InlineKeyboardButton("📅 Seleziona Data", callback_data="cambio_seleziona_data")],
+        [InlineKeyboardButton("⌨️ Inserisci Data Manuale", callback_data="cambio_data_manuale")],
+        [InlineKeyboardButton("◀️ Indietro", callback_data="menu_principale")]
+    ]
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(
+        "🔄 **AGGIUNGI CAMBIO**\n\nScegli come inserire la data:",
+        reply_markup=reply_markup
+    )
+
+async def mostra_selezione_data_cambio(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Mostra la selezione date per cambio"""
     oggi = datetime.now()
     keyboard = []
 
-    for i in range(7):
-        data = oggi + timedelta(days=i)
-        keyboard.append([InlineKeyboardButton(
-            data.strftime("%d/%m (%a)"),
-            callback_data=f"cambio_data_{data.strftime('%Y-%m-%d')}"
-        )])
+    # 2 settimane di date
+    for settimana in range(2):
+        riga = []
+        for giorno in range(7):
+            data = oggi + timedelta(days=settimana * 7 + giorno)
+            riga.append(InlineKeyboardButton(
+                data.strftime("%d/%m"),
+                callback_data=f"cambio_data_{data.strftime('%Y-%m-%d')}"
+            ))
+        keyboard.append(riga)
+
+    keyboard.append([InlineKeyboardButton("⌨️ Data Manuale", callback_data="cambio_data_manuale")])
+    keyboard.append([InlineKeyboardButton("◀️ Annulla", callback_data="menu_principale")])
 
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("📅 **Seleziona data del cambio:**", reply_markup=reply_markup)
+    
+    if update.callback_query:
+        await update.callback_query.edit_message_text(
+            "📅 **Seleziona data del cambio:**",
+            reply_markup=reply_markup
+        )
+    else:
+        await update.message.reply_text(
+            "📅 **Seleziona data del cambio:**",
+            reply_markup=reply_markup
+        )
+
+async def gestisci_data_manuale_cambio(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Gestisce l'inserimento manuale della data"""
+    await update.callback_query.edit_message_text(
+        "📅 **INSERISCI DATA MANUALE**\n\n"
+        "Invia la data nel formato GG/MM/AAAA\n"
+        "Esempio: 25/12/2024"
+    )
+    # Qui dovresti impostare uno stato per aspettare l'input dell'utente
+    context.user_data['waiting_for_date'] = True
 
 async def help_cambi(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Messaggio di help completo"""
@@ -407,9 +554,14 @@ async def help_cambi(update: Update, context: ContextTypes.DEFAULT_TYPE):
 • **Rimuovi Cambio:** Cancella cambi inseriti per errore
 
 📅 **SISTEMA SQUADRE:**
-• **Chi Tocca:** Visualizza turni di oggi/domani
+• **Chi Tocca:** Visualizza turni di oggi/domani e settimana
 • **Visualizza Squadre:** Elenco completo con componenti
 • **Gestisci Componenti:** Assegna VVF alle squadre
+
+🔔 **NUOVE FUNZIONI:**
+• **Carichi Pendenti:** Visualizza cambi programmati
+• **Mie Sostituzioni:** Sostituzioni che ti riguardano
+• **Selezione Date:** 2 settimane + inserimento manuale
 """
     await update.message.reply_text(help_text)
 
@@ -444,8 +596,23 @@ async def button_handler_cambi(update: Update, context: ContextTypes.DEFAULT_TYP
     elif data == "vvf_modifica":
         await update.callback_query.edit_message_text("✏️ **MODIFICA VVF**\n\nFunzione in sviluppo...")
 
+    elif data == "cambio_seleziona_data":
+        await mostra_selezione_data_cambio(update, context)
+
+    elif data == "cambio_data_manuale":
+        await gestisci_data_manuale_cambio(update, context)
+
     elif data.startswith("cambio_data_"):
-        await gestisci_selezione_data_cambio(update, context)
+        data_str = data.replace("cambio_data_", "")
+        if data_str != "manuale":
+            data_obj = datetime.strptime(data_str, "%Y-%m-%d")
+            await query.edit_message_text(
+                f"📅 **Data selezionata:** {data_obj.strftime('%d/%m/%Y')}\n\n"
+                "🔄 **WIZARD CAMBIO**\n\nSeleziona il tipo di turno..."
+            )
+
+    elif data == "menu_principale":
+        await query.edit_message_text("🏠 **MENU PRINCIPALE**\n\nUsa i pulsanti per navigare.")
 
 async def mostra_visualizza_squadre(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Mostra tutte le squadre organizzate per tipo"""
@@ -538,16 +705,6 @@ async def mostra_chi_tocca_domani(update: Update, context: ContextTypes.DEFAULT_
         messaggio += f"🌙 **Sera (20-24):** {squadra_sera}\n"
 
     await update.callback_query.edit_message_text(messaggio)
-
-async def gestisci_selezione_data_cambio(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Gestisce la selezione della data per il cambio"""
-    data_str = update.callback_query.data.replace("cambio_data_", "")
-    data = datetime.strptime(data_str, "%Y-%m-%d")
-
-    await update.callback_query.edit_message_text(
-        f"📅 **Data selezionata:** {data.strftime('%d/%m/%Y')}\n\n"
-        "🔄 **WIZARD CAMBIO**\n\nSeleziona il tipo di turno..."
-    )
 
 # === SISTEMA BACKUP ===
 def backup_database_cambi():
